@@ -128,16 +128,19 @@ class HalftimeAlertBot(commands.Bot):
             log.exception("Channel %s could not be fetched.", DISCORD_CHANNEL_ID)
             return
 
-        for hit in hits:
-            if hit.dedupe_key in self.alerted:
-                continue
-            self.alerted.add(hit.dedupe_key)
-            embed = build_alert_embed(hit)
-try:
-    await channel.send(embed=embed)
-                log.info("Sent alert for %s", hit.dedupe_key)
-            except Exception:
-                log.exception("Failed to send alert for %s", hit.dedupe_key)
+for hit in hits:
+    if hit.dedupe_key in self.alerted:
+        continue
+
+    self.alerted.add(hit.dedupe_key)
+
+    embed = build_alert_embed(hit)
+
+    try:
+        await channel.send(embed=embed)
+        log.info("Sent alert for %s", hit.dedupe_key)
+    except Exception:
+        log.exception("Failed to send alert for %s", hit.dedupe_key)
 
     @poll_live_games.before_loop
     async def before_poll(self) -> None:
