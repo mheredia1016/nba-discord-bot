@@ -47,8 +47,8 @@ def get_team_color(team_abbr: str) -> int:
 
 
 def get_team_logo_url(team_abbr: str) -> str:
-    team_abbr = team_abbr.upper()
-    return f"https://i.cdn.turner.com/nba/nba/.element/img/1.0/teamsites/logos/teamlogos_500x500/{team_abbr}.png"
+    team_abbr = team_abbr.lower()
+    return f"https://a.espncdn.com/combiner/i?img=/i/teamlogos/nba/500/{team_abbr}.png"
 
 
 # ---------------------------------
