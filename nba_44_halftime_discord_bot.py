@@ -166,7 +166,7 @@ class HalftimeAlertBot(commands.Bot):
                     ast = int(stats.get("assists", 0) or 0)
                     reb = int(stats.get("reboundsTotal", 0) or 0)
 
-                    matched = (ast == 4 and reb == 4) if EXACT_ONLY else (ast >= 4 and reb >= 4)
+                    matched = (ast >= 4 and reb >= 4) if EXACT_ONLY else (ast >= 4 and reb >= 4)
                     if not matched:
                         continue
 
