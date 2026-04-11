@@ -75,9 +75,12 @@ class HalftimeAlertBot(commands.Bot):
     async def on_ready(self) -> None:
         log.info("Logged in as %s (%s)", self.user, self.user.id if self.user else "?")
 
-        channel = self.get_channel(DISCORD_CHANNEL_ID)
-        if channel:
+        try:
+            channel = await self.fetch_channel(DISCORD_CHANNEL_ID)
             await channel.send("🚨 TEST ALERT 🚨 Bot is working!")
+            log.info("Test alert sent to channel %s", DISCORD_CHANNEL_ID)
+        except Exception as e:
+            log.exception("Test alert failed: %s", e)
 
     @tasks.loop(seconds=POLL_SECONDS)
     async def poll_live_games(self) -> None:
