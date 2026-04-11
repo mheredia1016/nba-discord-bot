@@ -72,12 +72,12 @@ class HalftimeAlertBot(commands.Bot):
             await self.session.close()
         await super().close()
 
- async def on_ready(self) -> None:
-    log.info("Logged in as %s (%s)", self.user, self.user.id if self.user else "?")
+    async def on_ready(self) -> None:
+        log.info("Logged in as %s (%s)", self.user, self.user.id if self.user else "?")
 
-    channel = self.get_channel(DISCORD_CHANNEL_ID)
-    if channel:
-        await channel.send("🚨 TEST ALERT 🚨 Bot is working!")
+        channel = self.get_channel(DISCORD_CHANNEL_ID)
+        if channel:
+            await channel.send("🚨 TEST ALERT 🚨 Bot is working!")
 
     @tasks.loop(seconds=POLL_SECONDS)
     async def poll_live_games(self) -> None:
