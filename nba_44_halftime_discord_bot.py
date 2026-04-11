@@ -45,10 +45,11 @@ class PlayerHit:
     game_period: int
     game_clock: str
     matchup: str
+    alert_type: str
 
     @property
     def dedupe_key(self) -> str:
-        return f"{self.game_id}:{self.player_id}:halftime-4x4"
+        return f"{self.game_id}:{self.player_id}:{self.alert_type}"
 
 
 class HalftimeAlertBot(commands.Bot):
@@ -118,98 +119,96 @@ class HalftimeAlertBot(commands.Bot):
 
     async def find_halftime_4x4_hits(self) -> List[PlayerHit]:
         try:
-            games = await self.fetch_live_scoreboard_games()
+            games = await self.fetch_live_box_scores()
         except Exception:
-            log.exception("Could not fetch live scoreboard")
-            return []
-
-        candidate_games = [g for g in games if self.is_halftime_window(g)]
-        if not candidate_games:
+            log.exception("Could not fetch live box scores")
             return []
 
         hits: List[PlayerHit] = []
-
-        for game in candidate_games:
-            game_id = str(game.get("gameId", ""))
-            if not game_id:
+        for game in games:
+            if not self.is_halftime_window(game):
                 continue
 
-            home_team = game.get("homeTeam", {}) or {}
-            away_team = game.get("awayTeam", {}) or {}
-            home_abbr = (home_team.get("teamTricode") or home_team.get("teamCode") or "HOME").upper()
-            away_abbr = (away_team.get("teamTricode") or away_team.get("teamCode") or "AWAY").upper()
+            home_team = game.get("home_team", {}) or {}
+            away_team = game.get("visitor_team", {}) or {}
+            home_abbr = home_team.get("abbreviation", "HOME")
+            away_abbr = away_team.get("abbreviation", "AWAY")
 
             if TEAM_FILTER and home_abbr not in TEAM_FILTER and away_abbr not in TEAM_FILTER:
                 continue
 
             matchup = f"{away_abbr} @ {home_abbr}"
-            period = int(game.get("period", 0) or 0)
-            status_text = str(game.get("gameStatusText", "") or "")
-            clock = str(game.get("gameClock", "") or "")
+            game_id = str(game.get("id", matchup))
+            status = str(game.get("status", ""))
+            period = int(game.get("period") or 0)
+            clock = str(game.get("time", ""))
 
-            try:
-                box = await self.fetch_live_box_score_json(game_id)
-            except Exception:
-                log.exception("Could not fetch live box score for game %s", game_id)
-                continue
-
-            game_data = box.get("game", {}) or {}
-            home = game_data.get("homeTeam", {}) or {}
-            away = game_data.get("awayTeam", {}) or {}
-
-            for side, team_abbr, opponent_abbr in (
-                (home, home_abbr, away_abbr),
-                (away, away_abbr, home_abbr),
-            ):
+            for side, opponent in ((home_team, away_abbr), (away_team, home_abbr)):
+                team_abbr = side.get("abbreviation", "UNK")
                 for player in side.get("players", []) or []:
-                    stats = player.get("statistics", {}) or {}
-                    ast = int(stats.get("assists", 0) or 0)
-                    reb = int(stats.get("reboundsTotal", 0) or 0)
+                    ast = int(player.get("ast") or 0)
+                    reb = int(player.get("reb") or 0)
+                    pts = int(player.get("pts") or 0)
 
-                    matched = (ast >= 4 and reb >= 4) if EXACT_ONLY else (ast >= 4 and reb >= 4)
-                    if not matched:
+                    four_by_four_match = (ast >= 4 and reb >= 4)
+                    triple_double_watch_match = (pts >= 5 and reb >= 4 and ast >= 4)
+
+                    if not four_by_four_match and not triple_double_watch_match:
                         continue
 
-                    first = str(player.get("firstName", "") or "").strip()
-                    last = str(player.get("familyName", "") or "").strip()
-                    player_name = f"{first} {last}".strip() or "Unknown Player"
+                    player_info = player.get("player", {}) or {}
+                    player_id = str(player_info.get("id", player.get("id", "unknown")))
+                    player_name = (
+                        f"{player_info.get('first_name', '').strip()} {player_info.get('last_name', '').strip()}"
+                    ).strip() or "Unknown Player"
 
-                    hits.append(
-                        PlayerHit(
-                            game_id=game_id,
-                            player_id=str(player.get("personId", "unknown")),
-                            player_name=player_name,
-                            team_abbr=team_abbr,
-                            opponent_abbr=opponent_abbr,
-                            assists=ast,
-                            rebounds=reb,
-                            points=int(stats.get("points", 0) or 0),
-                            minutes=str(stats.get("minutes", "") or "0"),
-                            game_status=status_text,
-                            game_period=period,
-                            game_clock=clock,
-                            matchup=matchup,
-                        )
+                    common_data = dict(
+                        game_id=game_id,
+                        player_id=player_id,
+                        player_name=player_name,
+                        team_abbr=team_abbr,
+                        opponent_abbr=opponent,
+                        assists=ast,
+                        rebounds=reb,
+                        points=pts,
+                        minutes=str(player.get("min") or "0"),
+                        game_status=status,
+                        game_period=period,
+                        game_clock=clock,
+                        matchup=matchup,
                     )
+
+                    if four_by_four_match:
+                        hits.append(
+                            PlayerHit(
+                                **common_data,
+                                alert_type="halftime-4x4",
+                            )
+                        )
+
+                    if triple_double_watch_match:
+                        hits.append(
+                            PlayerHit(
+                                **common_data,
+                                alert_type="triple-double-watch",
+                            )
+                        )
 
         return hits
 
     @staticmethod
-    def is_halftime_window(game: dict) -> bool:
-        status_text = str(game.get("gameStatusText", "") or "").lower()
-        period = int(game.get("period", 0) or 0)
-
-        halftime_terms = ("halftime", "half", "intermission", "end of 2nd quarter")
-        if any(term in status_text for term in halftime_terms):
-            return True
-
-        # Fallback: start of Q3 still close enough for a halftime-style check.
-        return period in {2, 3}
-
-    @staticmethod
     def format_alert(hit: PlayerHit) -> str:
+        if hit.alert_type == "triple-double-watch":
+            return (
+                "🚨 **Triple-Double Watch** 🚨\n"
+                f"**{hit.player_name}** ({hit.team_abbr}) has **{hit.points} PTS**, **{hit.rebounds} REB**, and **{hit.assists} AST** by halftime.\n"
+                f"Matchup: **{hit.matchup}**\n"
+                f"Minutes: **{hit.minutes}**\n"
+                f"Game status: **{hit.game_status}** | Period: **{hit.game_period}** | Clock: **{hit.game_clock}**"
+            )
+
         return (
-            "🚨 **Halftime 4x4 Alert** 🚨\n"
+            "🚨 **Double-Double Watch** 🚨\n"
             f"**{hit.player_name}** ({hit.team_abbr}) has **{hit.assists} AST** and **{hit.rebounds} REB** by halftime.\n"
             f"Matchup: **{hit.matchup}**\n"
             f"Points: **{hit.points}** | Minutes: **{hit.minutes}**\n"
