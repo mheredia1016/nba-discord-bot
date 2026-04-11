@@ -8,6 +8,46 @@ from nba_api.live.nba.endpoints import scoreboard
 import discord
 from discord.ext import commands, tasks
 
+TEAM_COLORS = {
+    "ATL": 0xE03A3E,
+    "BOS": 0x007A33,
+    "BKN": 0x000000,
+    "CHA": 0x1D1160,
+    "CHI": 0xCE1141,
+    "CLE": 0x860038,
+    "DAL": 0x00538C,
+    "DEN": 0x0E2240,
+    "DET": 0xC8102E,
+    "GSW": 0x1D428A,
+    "HOU": 0xCE1141,
+    "IND": 0x002D62,
+    "LAC": 0xC8102E,
+    "LAL": 0x552583,
+    "MEM": 0x5D76A9,
+    "MIA": 0x98002E,
+    "MIL": 0x00471B,
+    "MIN": 0x0C2340,
+    "NOP": 0x0C2340,
+    "NYK": 0x006BB6,
+    "OKC": 0x007AC1,
+    "ORL": 0x0077C0,
+    "PHI": 0x006BB6,
+    "PHX": 0x1D1160,
+    "POR": 0xE03A3E,
+    "SAC": 0x5A2D81,
+    "SAS": 0xC4CED4,
+    "TOR": 0xCE1141,
+    "UTA": 0x002B5C,
+    "WAS": 0x002B5C,
+}
+
+def get_team_color(team_abbr: str) -> int:
+    return TEAM_COLORS.get(team_abbr.upper(), 0x2F3136)
+
+def get_team_logo_url(team_abbr: str) -> str:
+    team_abbr = team_abbr.upper()
+    return f"https://i.cdn.turner.com/nba/nba/.element/img/1.0/teamsites/logos/teamlogos_500x500/{team_abbr}.png"
+
 # ---------------------------------
 # Config via environment variables
 # ---------------------------------
@@ -92,9 +132,9 @@ class HalftimeAlertBot(commands.Bot):
             if hit.dedupe_key in self.alerted:
                 continue
             self.alerted.add(hit.dedupe_key)
-            message = self.format_alert(hit)
-            try:
-                await channel.send(message)
+            embed = build_alert_embed(hit)
+try:
+    await channel.send(embed=embed)
                 log.info("Sent alert for %s", hit.dedupe_key)
             except Exception:
                 log.exception("Failed to send alert for %s", hit.dedupe_key)
@@ -196,24 +236,59 @@ class HalftimeAlertBot(commands.Bot):
 
         return hits
 
-    @staticmethod
-    def format_alert(hit: PlayerHit) -> str:
-        if hit.alert_type == "triple-double-watch":
-            return (
-                "🚨 **Triple-Double Watch** 🚨\n"
-                f"**{hit.player_name}** ({hit.team_abbr}) has **{hit.points} PTS**, **{hit.rebounds} REB**, and **{hit.assists} AST** by halftime.\n"
-                f"Matchup: **{hit.matchup}**\n"
-                f"Minutes: **{hit.minutes}**\n"
-                f"Game status: **{hit.game_status}** | Period: **{hit.game_period}** | Clock: **{hit.game_clock}**"
-            )
+def build_alert_embed(hit: PlayerHit) -> discord.Embed:
+    def clean_time(val: str) -> str:
+        if not val:
+            return ""
+        val = val.replace("PT", "").replace(".00S", "")
+        if "M" in val:
+            mins, rest = val.split("M", 1)
+            secs = rest.replace("S", "") or "0"
+            return f"{int(mins)}:{int(secs):02d}"
+        return val.replace("S", "")
 
-        return (
-            "🚨 **Double-Double Watch** 🚨\n"
-            f"**{hit.player_name}** ({hit.team_abbr}) has **{hit.assists} AST** and **{hit.rebounds} REB** by halftime.\n"
-            f"Matchup: **{hit.matchup}**\n"
-            f"Points: **{hit.points}** | Minutes: **{hit.minutes}**\n"
-            f"Game status: **{hit.game_status}** | Period: **{hit.game_period}** | Clock: **{hit.game_clock}**"
+    pretty_clock = clean_time(hit.game_clock)
+    pretty_minutes = clean_time(hit.minutes)
+
+    if hit.alert_type == "triple-double-watch":
+        title = "👀 Triple-Double Watch"
+        stat_line = f"**{hit.points} PTS • {hit.rebounds} REB • {hit.assists} AST**"
+    else:
+        title = "🚨 Double-Double Watch 🚨"
+        stat_line = f"**{hit.assists} AST • {hit.rebounds} REB • {hit.points} PTS**"
+
+    embed = discord.Embed(
+        title=title,
+        description=(
+            f"**{hit.player_name}** ({hit.team_abbr})\n"
+            f"{stat_line}\n\n"
+            f"**{hit.matchup}**"
+        ),
+        color=get_team_color(hit.team_abbr),
+    )
+
+    embed.set_thumbnail(url=get_team_logo_url(hit.team_abbr))
+
+    embed.add_field(
+        name="Game",
+        value=hit.game_status or "Halftime / Early 3Q",
+        inline=True,
+    )
+
+    embed.add_field(
+        name="Minutes",
+        value=pretty_minutes or hit.minutes or "-",
+        inline=True,
+    )
+
+    if pretty_clock:
+        embed.add_field(
+            name="Clock",
+            value=pretty_clock,
+            inline=True,
         )
+
+    return embed
 
 
 bot = HalftimeAlertBot()
