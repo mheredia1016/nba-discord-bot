@@ -113,26 +113,20 @@ class HalftimeAlertBot(commands.Bot):
         log.info("Logged in as %s (%s)", self.user, self.user.id if self.user else "?")
 
     @tasks.loop(seconds=POLL_SECONDS)
-    async def poll_live_games(self) -> None:
-        if not DISCORD_CHANNEL_ID:
-            log.warning("DISCORD_CHANNEL_ID is not set. Skipping poll.")
-            return
+async def poll_live_games(self) -> None:
+    if not DISCORD_CHANNEL_ID:
+        log.warning("DISCORD_CHANNEL_ID is not set. Skipping poll.")
+        return
 
-        hits = await self.find_halftime_4x4_hits()
-        if not hits:
-            return
+    hits = await self.find_halftime_4x4_hits()
+    if not hits:
+        return
 
-        try:
-            channel = await self.fetch_channel(DISCORD_CHANNEL_ID)
-        except Exception:
-            log.exception("Channel %s could not be fetched.", DISCORD_CHANNEL_ID)
-            return
-
-for hit in hits:
-    if hit.dedupe_key in self.alerted:
-        continue
-
-    self.alerted.add(hit.dedupe_key)
+    try:
+        channel = await self.fetch_channel(DISCORD_CHANNEL_ID)
+    except Exception:
+        log.exception("Channel %s could not be fetched.", DISCORD_CHANNEL_ID)
+        return
 
     embed = build_alert_embed(hit)
 
