@@ -107,12 +107,18 @@ def build_alert_embed(hit: PlayerHit) -> discord.Embed:
     pretty_clock = clean_time(hit.game_clock)
     pretty_minutes = clean_time(hit.minutes)
 
-    if hit.alert_type == "triple-double-watch":
+    if hit.alert_type == "early-watch":
+        title = "👀 Early Watch"
+        stat_line = f"**{hit.assists} AST • {hit.rebounds} REB • {hit.points} PTS**"
+        subtitle = "Q1 signal"
+    elif hit.alert_type == "triple-double-watch":
         title = "👀 Triple-Double Watch"
         stat_line = f"**{hit.points} PTS • {hit.rebounds} REB • {hit.assists} AST**"
+        subtitle = "By halftime / early 3Q"
     else:
         title = "🚨 Double-Double Watch 🚨"
         stat_line = f"**{hit.assists} AST • {hit.rebounds} REB • {hit.points} PTS**"
+        subtitle = "By halftime / early 3Q"
 
     embed = discord.Embed(
         title=title,
@@ -128,7 +134,7 @@ def build_alert_embed(hit: PlayerHit) -> discord.Embed:
 
     embed.add_field(
         name="Game",
-        value=hit.game_status or "Halftime / Early 3Q",
+        value=f"{hit.game_status or 'Live'} • {subtitle}",
         inline=True,
     )
 
@@ -174,7 +180,7 @@ class HalftimeAlertBot(commands.Bot):
             log.warning("DISCORD_CHANNEL_ID is not set. Skipping poll.")
             return
 
-        hits = await self.find_halftime_hits()
+        hits = await self.find_alert_hits()
         if not hits:
             return
 
@@ -214,7 +220,7 @@ class HalftimeAlertBot(commands.Bot):
         board = scoreboard.ScoreBoard()
         return board.get_dict().get("scoreboard", {}).get("games", [])
 
-    async def find_halftime_hits(self) -> List[PlayerHit]:
+    async def find_alert_hits(self) -> List[PlayerHit]:
         try:
             games = await self.fetch_live_scoreboard_games()
         except Exception:
@@ -224,9 +230,6 @@ class HalftimeAlertBot(commands.Bot):
         hits: List[PlayerHit] = []
 
         for game in games:
-            if not self.is_halftime_window(game):
-                continue
-
             game_id = str(game.get("gameId", ""))
             if not game_id:
                 continue
@@ -243,6 +246,10 @@ class HalftimeAlertBot(commands.Bot):
             status = str(game.get("gameStatusText", "") or "")
             period = int(game.get("period", 0) or 0)
             clock = str(game.get("gameClock", "") or "")
+
+            # Only watch Q1, Q2, and Q3
+            if period not in {1, 2, 3}:
+                continue
 
             try:
                 box = await self.fetch_live_box_score_json(game_id)
@@ -264,10 +271,11 @@ class HalftimeAlertBot(commands.Bot):
                     reb = int(stats.get("reboundsTotal", 0) or 0)
                     pts = int(stats.get("points", 0) or 0)
 
-                    double_double_watch = (ast >= 4 and reb >= 4)
-                    triple_double_watch = (pts >= 5 and reb >= 4 and ast >= 4)
+                    early_watch = (period == 1 and ast >= 3 and reb >= 3)
+                    double_double_watch = (period in {2, 3} and ast >= 4 and reb >= 4)
+                    triple_double_watch = (period in {2, 3} and pts >= 5 and reb >= 4 and ast >= 4)
 
-                    if not double_double_watch and not triple_double_watch:
+                    if not early_watch and not double_double_watch and not triple_double_watch:
                         continue
 
                     first = str(player.get("firstName", "") or "").strip()
@@ -291,6 +299,9 @@ class HalftimeAlertBot(commands.Bot):
                         matchup=matchup,
                     )
 
+                    if early_watch:
+                        hits.append(PlayerHit(**common_data, alert_type="early-watch"))
+
                     if double_double_watch:
                         hits.append(PlayerHit(**common_data, alert_type="double-double-watch"))
 
@@ -298,17 +309,6 @@ class HalftimeAlertBot(commands.Bot):
                         hits.append(PlayerHit(**common_data, alert_type="triple-double-watch"))
 
         return hits
-
-    @staticmethod
-    def is_halftime_window(game: dict) -> bool:
-        status_text = str(game.get("gameStatusText", "") or "").lower()
-        period = int(game.get("period", 0) or 0)
-
-        halftime_terms = ("halftime", "half", "intermission", "end of 2nd quarter")
-        if any(term in status_text for term in halftime_terms):
-            return True
-
-        return period in {2, 3}
 
 
 bot = HalftimeAlertBot()
