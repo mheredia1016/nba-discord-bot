@@ -51,6 +51,10 @@ def get_team_logo_url(team_abbr: str) -> str:
     return f"https://a.espncdn.com/combiner/i?img=/i/teamlogos/nba/500/{team_abbr}.png"
 
 
+def get_player_photo_url(player_id: str) -> str:
+    return f"https://cdn.nba.com/headshots/nba/latest/1040x760/{player_id}.png"
+
+
 # ---------------------------------
 # Config via environment variables
 # ---------------------------------
@@ -114,11 +118,11 @@ def build_alert_embed(hit: PlayerHit) -> discord.Embed:
     elif hit.alert_type == "triple-double-watch":
         title = "👀 Triple-Double Watch"
         stat_line = f"**{hit.points} PTS • {hit.rebounds} REB • {hit.assists} AST**"
-        subtitle = "By halftime / early 3Q"
+        subtitle = "Halftime"
     else:
         title = "🚨 Double-Double Watch 🚨"
         stat_line = f"**{hit.assists} AST • {hit.rebounds} REB • {hit.points} PTS**"
-        subtitle = "By halftime / early 3Q"
+        subtitle = "Halftime"
 
     embed = discord.Embed(
         title=title,
@@ -130,7 +134,8 @@ def build_alert_embed(hit: PlayerHit) -> discord.Embed:
         color=get_team_color(hit.team_abbr),
     )
 
-    embed.set_thumbnail(url=get_team_logo_url(hit.team_abbr))
+    embed.set_thumbnail(url=get_player_photo_url(hit.player_id))
+    embed.set_footer(text=hit.team_abbr, icon_url=get_team_logo_url(hit.team_abbr))
 
     embed.add_field(
         name="Game",
@@ -247,8 +252,8 @@ class HalftimeAlertBot(commands.Bot):
             period = int(game.get("period", 0) or 0)
             clock = str(game.get("gameClock", "") or "")
 
-            # Only watch Q1, Q2, and Q3
-            if period not in {1, 2, 3}:
+            # Q1 early watch only, Q2 halftime alerts only. No Q3 alerts.
+            if period not in {1, 2}:
                 continue
 
             try:
@@ -272,8 +277,8 @@ class HalftimeAlertBot(commands.Bot):
                     pts = int(stats.get("points", 0) or 0)
 
                     early_watch = (period == 1 and ast >= 3 and reb >= 3)
-                    double_double_watch = (period in {2, 3} and ast >= 4 and reb >= 4)
-                    triple_double_watch = (period in {2, 3} and pts >= 5 and reb >= 4 and ast >= 4)
+                    double_double_watch = (period == 2 and ast >= 4 and reb >= 4)
+                    triple_double_watch = (period == 2 and pts >= 5 and reb >= 4 and ast >= 4)
 
                     if not early_watch and not double_double_watch and not triple_double_watch:
                         continue
