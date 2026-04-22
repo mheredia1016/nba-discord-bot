@@ -1,4 +1,5 @@
 import asyncio
+import io
 import logging
 import os
 from dataclasses import dataclass
@@ -141,7 +142,6 @@ def build_alert_embed(hit: PlayerHit) -> discord.Embed:
         color=get_team_color(hit.team_abbr),
     )
 
-    embed.set_thumbnail(url=get_player_photo_url(hit.player_id))
     embed.set_footer(text=hit.team_abbr, icon_url=get_team_logo_url(hit.team_abbr))
 
     embed.add_field(
@@ -186,6 +186,20 @@ class HalftimeAlertBot(commands.Bot):
     async def on_ready(self) -> None:
         log.info("Logged in as %s (%s)", self.user, self.user.id if self.user else "?")
 
+    async def fetch_player_photo_bytes(self, player_id: str) -> bytes | None:
+        assert self.session is not None
+        url = get_player_photo_url(player_id)
+
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    return await resp.read()
+                log.info("No player photo for %s (status %s)", player_id, resp.status)
+                return None
+        except Exception:
+            log.exception("Failed to fetch player photo for %s", player_id)
+            return None
+
     @tasks.loop(seconds=POLL_SECONDS)
     async def poll_live_games(self) -> None:
         try:
@@ -216,7 +230,19 @@ class HalftimeAlertBot(commands.Bot):
                 embed = build_alert_embed(hit)
 
                 try:
-                    await channel.send(embed=embed)
+                    photo_bytes = await self.fetch_player_photo_bytes(hit.player_id)
+
+                    if photo_bytes:
+                        file = discord.File(
+                            fp=io.BytesIO(photo_bytes),
+                            filename=f"{hit.player_id}.png",
+                        )
+                        embed.set_thumbnail(url=f"attachment://{hit.player_id}.png")
+                        await channel.send(embed=embed, file=file)
+                    else:
+                        embed.set_thumbnail(url=get_team_logo_url(hit.team_abbr))
+                        await channel.send(embed=embed)
+
                     log.info("Sent alert for %s", hit.dedupe_key)
                 except Exception:
                     log.exception("Failed to send alert for %s", hit.dedupe_key)
@@ -283,7 +309,6 @@ class HalftimeAlertBot(commands.Bot):
             period = int(game.get("period", 0) or 0)
             clock = str(game.get("gameClock", "") or "")
 
-            # Q1 early watch only, Q2 halftime alerts only. No Q3 alerts.
             if period not in {1, 2}:
                 continue
 
