@@ -52,7 +52,8 @@ def get_team_logo_url(team_abbr: str) -> str:
 
 
 def get_player_photo_url(player_id: str) -> str:
-    return f"https://cdn.nba.com/headshots/nba/latest/1040x760/{player_id}.png"
+    # Smaller current NBA CDN headshot format tends to render more reliably in embeds
+    return f"https://cdn.nba.com/headshots/nba/latest/260x190/{player_id}.png"
 
 
 # ---------------------------------
@@ -61,6 +62,7 @@ def get_player_photo_url(player_id: str) -> str:
 DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
 DISCORD_CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID", "0"))
 POLL_SECONDS = int(os.getenv("POLL_SECONDS", "15"))
+DEBUG_STATS = os.getenv("DEBUG_STATS", "false").lower() == "true"
 
 TEAM_FILTER = {
     team.strip().upper()
@@ -134,6 +136,7 @@ def build_alert_embed(hit: PlayerHit) -> discord.Embed:
         color=get_team_color(hit.team_abbr),
     )
 
+    # Player photo first. Team logo still shows in footer as fallback branding.
     embed.set_thumbnail(url=get_player_photo_url(hit.player_id))
     embed.set_footer(text=hit.team_abbr, icon_url=get_team_logo_url(hit.team_abbr))
 
@@ -181,32 +184,41 @@ class HalftimeAlertBot(commands.Bot):
 
     @tasks.loop(seconds=POLL_SECONDS)
     async def poll_live_games(self) -> None:
-        if not DISCORD_CHANNEL_ID:
-            log.warning("DISCORD_CHANNEL_ID is not set. Skipping poll.")
-            return
-
-        hits = await self.find_alert_hits()
-        if not hits:
-            return
-
         try:
-            channel = await self.fetch_channel(DISCORD_CHANNEL_ID)
-        except Exception:
-            log.exception("Channel %s could not be fetched.", DISCORD_CHANNEL_ID)
-            return
+            log.info("Polling cycle started")
 
-        for hit in hits:
-            if hit.dedupe_key in self.alerted:
-                continue
+            if not DISCORD_CHANNEL_ID:
+                log.warning("DISCORD_CHANNEL_ID is not set. Skipping poll.")
+                return
 
-            self.alerted.add(hit.dedupe_key)
-            embed = build_alert_embed(hit)
+            hits = await self.find_alert_hits()
+            log.info("Found %s qualifying hits this cycle", len(hits))
+
+            if not hits:
+                return
 
             try:
-                await channel.send(embed=embed)
-                log.info("Sent alert for %s", hit.dedupe_key)
+                channel = await self.fetch_channel(DISCORD_CHANNEL_ID)
             except Exception:
-                log.exception("Failed to send alert for %s", hit.dedupe_key)
+                log.exception("Channel %s could not be fetched.", DISCORD_CHANNEL_ID)
+                return
+
+            for hit in hits:
+                if hit.dedupe_key in self.alerted:
+                    log.info("Skipping duplicate hit %s", hit.dedupe_key)
+                    continue
+
+                self.alerted.add(hit.dedupe_key)
+                embed = build_alert_embed(hit)
+
+                try:
+                    await channel.send(embed=embed)
+                    log.info("Sent alert for %s", hit.dedupe_key)
+                except Exception:
+                    log.exception("Failed to send alert for %s", hit.dedupe_key)
+
+        except Exception:
+            log.exception("poll_live_games crashed this cycle")
 
     @poll_live_games.before_loop
     async def before_poll(self) -> None:
@@ -219,11 +231,14 @@ class HalftimeAlertBot(commands.Bot):
             text = await resp.text()
             if resp.status != 200:
                 raise RuntimeError(f"Live boxscore API error {resp.status}: {text[:300]}")
+            log.info("Fetched box score for game %s", game_id)
             return await resp.json()
 
     async def fetch_live_scoreboard_games(self) -> List[dict]:
         board = scoreboard.ScoreBoard()
-        return board.get_dict().get("scoreboard", {}).get("games", [])
+        games = board.get_dict().get("scoreboard", {}).get("games", [])
+        log.info("Fetched %s live games from scoreboard", len(games))
+        return games
 
     async def find_alert_hits(self) -> List[PlayerHit]:
         try:
@@ -276,17 +291,23 @@ class HalftimeAlertBot(commands.Bot):
                     reb = int(stats.get("reboundsTotal", 0) or 0)
                     pts = int(stats.get("points", 0) or 0)
 
+                    first = str(player.get("firstName", "") or "").strip()
+                    last = str(player.get("familyName", "") or "").strip()
+                    player_name = f"{first} {last}".strip() or "Unknown Player"
+                    player_id = str(player.get("personId", "unknown"))
+
+                    if DEBUG_STATS:
+                        log.info(
+                            "%s | %s | Q%s | PTS=%s REB=%s AST=%s",
+                            matchup, player_name, period, pts, reb, ast
+                        )
+
                     early_watch = (period == 1 and ast >= 3 and reb >= 3)
                     double_double_watch = (period == 2 and ast >= 4 and reb >= 4)
                     triple_double_watch = (period == 2 and pts >= 5 and reb >= 4 and ast >= 4)
 
                     if not early_watch and not double_double_watch and not triple_double_watch:
                         continue
-
-                    first = str(player.get("firstName", "") or "").strip()
-                    last = str(player.get("familyName", "") or "").strip()
-                    player_name = f"{first} {last}".strip() or "Unknown Player"
-                    player_id = str(player.get("personId", "unknown"))
 
                     common_data = dict(
                         game_id=game_id,
@@ -328,7 +349,8 @@ async def ping(ctx: commands.Context) -> None:
 async def health(ctx: commands.Context) -> None:
     await ctx.send(
         f"Watching live NBA games every {POLL_SECONDS}s. "
-        f"Team filter: {', '.join(sorted(TEAM_FILTER)) or 'none'}."
+        f"Team filter: {', '.join(sorted(TEAM_FILTER)) or 'none'}. "
+        f"Debug stats: {DEBUG_STATS}."
     )
 
 
