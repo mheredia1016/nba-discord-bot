@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from dataclasses import dataclass
@@ -52,7 +53,6 @@ def get_team_logo_url(team_abbr: str) -> str:
 
 
 def get_player_photo_url(player_id: str) -> str:
-    # Smaller current NBA CDN headshot format tends to render more reliably in embeds
     return f"https://cdn.nba.com/headshots/nba/latest/260x190/{player_id}.png"
 
 
@@ -136,7 +136,6 @@ def build_alert_embed(hit: PlayerHit) -> discord.Embed:
         color=get_team_color(hit.team_abbr),
     )
 
-    # Player photo first. Team logo still shows in footer as fallback branding.
     embed.set_thumbnail(url=get_player_photo_url(hit.player_id))
     embed.set_footer(text=hit.team_abbr, icon_url=get_team_logo_url(hit.team_abbr))
 
@@ -235,10 +234,22 @@ class HalftimeAlertBot(commands.Bot):
             return await resp.json()
 
     async def fetch_live_scoreboard_games(self) -> List[dict]:
-        board = scoreboard.ScoreBoard()
-        games = board.get_dict().get("scoreboard", {}).get("games", [])
-        log.info("Fetched %s live games from scoreboard", len(games))
-        return games
+        log.info("About to fetch live scoreboard")
+
+        def get_games() -> List[dict]:
+            board = scoreboard.ScoreBoard()
+            return board.get_dict().get("scoreboard", {}).get("games", [])
+
+        try:
+            games = await asyncio.wait_for(asyncio.to_thread(get_games), timeout=20)
+            log.info("Fetched %s live games from scoreboard", len(games))
+            return games
+        except asyncio.TimeoutError:
+            log.exception("Timed out fetching live scoreboard")
+            return []
+        except Exception:
+            log.exception("Failed fetching live scoreboard")
+            return []
 
     async def find_alert_hits(self) -> List[PlayerHit]:
         try:
@@ -267,7 +278,6 @@ class HalftimeAlertBot(commands.Bot):
             period = int(game.get("period", 0) or 0)
             clock = str(game.get("gameClock", "") or "")
 
-            # Q1 early watch only, Q2 halftime alerts only. No Q3 alerts.
             if period not in {1, 2}:
                 continue
 
