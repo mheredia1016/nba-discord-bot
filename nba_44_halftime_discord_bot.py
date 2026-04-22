@@ -87,6 +87,7 @@ class PlayerHit:
     assists: int
     rebounds: int
     points: int
+    threes_made: int
     minutes: str
     game_status: str
     game_period: int
@@ -121,6 +122,10 @@ def build_alert_embed(hit: PlayerHit) -> discord.Embed:
         title = "👀 Triple-Double Watch"
         stat_line = f"**{hit.points} PTS • {hit.rebounds} REB • {hit.assists} AST**"
         subtitle = "Halftime"
+    elif hit.alert_type == "hes-on-fire":
+        title = "🔥 He's On Fire"
+        stat_line = f"**{hit.points} PTS • {hit.threes_made} 3PM**"
+        subtitle = "Hot shooting start"
     else:
         title = "🚨 Double-Double Watch 🚨"
         stat_line = f"**{hit.assists} AST • {hit.rebounds} REB • {hit.points} PTS**"
@@ -278,6 +283,7 @@ class HalftimeAlertBot(commands.Bot):
             period = int(game.get("period", 0) or 0)
             clock = str(game.get("gameClock", "") or "")
 
+            # Q1 early watch only, Q2 halftime alerts only. No Q3 alerts.
             if period not in {1, 2}:
                 continue
 
@@ -300,6 +306,7 @@ class HalftimeAlertBot(commands.Bot):
                     ast = int(stats.get("assists", 0) or 0)
                     reb = int(stats.get("reboundsTotal", 0) or 0)
                     pts = int(stats.get("points", 0) or 0)
+                    threes_made = int(stats.get("threePointersMade", 0) or 0)
 
                     first = str(player.get("firstName", "") or "").strip()
                     last = str(player.get("familyName", "") or "").strip()
@@ -308,15 +315,19 @@ class HalftimeAlertBot(commands.Bot):
 
                     if DEBUG_STATS:
                         log.info(
-                            "%s | %s | Q%s | PTS=%s REB=%s AST=%s",
-                            matchup, player_name, period, pts, reb, ast
+                            "%s | %s | Q%s | PTS=%s REB=%s AST=%s 3PM=%s",
+                            matchup, player_name, period, pts, reb, ast, threes_made
                         )
 
                     early_watch = (period == 1 and ast >= 3 and reb >= 3)
                     double_double_watch = (period == 2 and ast >= 4 and reb >= 4)
                     triple_double_watch = (period == 2 and pts >= 5 and reb >= 4 and ast >= 4)
+                    hes_on_fire = (
+                        (period == 1 and threes_made >= 2 and pts >= 8) or
+                        (period == 2 and threes_made >= 3 and pts >= 12)
+                    )
 
-                    if not early_watch and not double_double_watch and not triple_double_watch:
+                    if not early_watch and not double_double_watch and not triple_double_watch and not hes_on_fire:
                         continue
 
                     common_data = dict(
@@ -328,6 +339,7 @@ class HalftimeAlertBot(commands.Bot):
                         assists=ast,
                         rebounds=reb,
                         points=pts,
+                        threes_made=threes_made,
                         minutes=str(stats.get("minutes", "") or "0"),
                         game_status=status,
                         game_period=period,
@@ -343,6 +355,9 @@ class HalftimeAlertBot(commands.Bot):
 
                     if triple_double_watch:
                         hits.append(PlayerHit(**common_data, alert_type="triple-double-watch"))
+
+                    if hes_on_fire:
+                        hits.append(PlayerHit(**common_data, alert_type="hes-on-fire"))
 
         return hits
 
