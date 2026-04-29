@@ -114,12 +114,25 @@ class PropLeg:
     price: Optional[int]
     book: str
     link: Optional[str] = None
+    live_value: Optional[float] = None
+    projected_value: Optional[float] = None
 
     def display(self) -> str:
         line_txt = "" if self.line is None else f" {self.line:g}"
         price_txt = "" if self.price is None else f" ({self.price:+d})"
         book_txt = f"[{self.book}]({self.link})" if self.link else self.book
-        return f"• **{self.player_name}** {self.side}{line_txt} {self.label}{price_txt} — {book_txt}"
+
+        progress_txt = ""
+        if self.live_value is not None and self.line:
+            pct = int(round((self.live_value / self.line) * 100))
+            proj_txt = ""
+            if self.projected_value is not None:
+                proj_txt = f" • Proj: {self.projected_value:.1f}"
+            progress_txt = f"\n  ↳ Live: **{self.live_value:g}/{self.line:g} {self.label}** ({pct}%){proj_txt}"
+        elif self.live_value is not None:
+            progress_txt = f"\n  ↳ Live: **{self.live_value:g} {self.label}**"
+
+        return f"• **{self.player_name}** {self.side}{line_txt} {self.label}{price_txt} — {book_txt}{progress_txt}"
 
 def build_alert_embed(hit: PlayerHit) -> discord.Embed:
     def clean_time(val: str) -> str:
