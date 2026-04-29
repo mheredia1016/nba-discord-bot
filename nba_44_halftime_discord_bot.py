@@ -564,22 +564,41 @@ async def health(ctx: commands.Context) -> None:
 async def testparlay(ctx: commands.Context) -> None:
     groups = {
         "🧱 Builder Target +500": [
-            PropLeg("Nikola Jokic", "player_assists", "AST", "Over", 7.5, -115, "FanDuel", "https://sportsbook.fanduel.com/"),
-            PropLeg("Jamal Murray", "player_points", "PTS", "Over", 20.5, -110, "FanDuel", "https://sportsbook.fanduel.com/"),
-            PropLeg("Michael Porter Jr.", "player_threes", "3PM", "Over", 2.5, +135, "FanDuel", "https://sportsbook.fanduel.com/"),
+            PropLeg("Nikola Jokic", "player_assists", "AST", "Over", 7.5, -115, "FanDuel",
+                    "https://sportsbook.fanduel.com/", 4, 9.6),
+
+            PropLeg("Jamal Murray", "player_points", "PTS", "Over", 20.5, -110, "FanDuel",
+                    "https://sportsbook.fanduel.com/", 12, 26.4),
+
+            PropLeg("Michael Porter Jr.", "player_threes", "3PM", "Over", 2.5, +135, "FanDuel",
+                    "https://sportsbook.fanduel.com/", 2, 4.8),
         ],
+
         "🔥 Risky Target +1000": [
-            PropLeg("Nikola Jokic", "player_points_rebounds_assists", "PRA", "Over", 45.5, +105, "FanDuel", "https://sportsbook.fanduel.com/"),
-            PropLeg("Jamal Murray", "player_assists", "AST", "Over", 5.5, +120, "FanDuel", "https://sportsbook.fanduel.com/"),
-            PropLeg("Aaron Gordon", "player_rebounds", "REB", "Over", 6.5, +125, "FanDuel", "https://sportsbook.fanduel.com/"),
+            PropLeg("Nikola Jokic", "player_points_rebounds_assists", "PRA", "Over", 45.5, +105, "FanDuel",
+                    "https://sportsbook.fanduel.com/", 28, 58.2),
+
+            PropLeg("Jamal Murray", "player_assists", "AST", "Over", 5.5, +120, "FanDuel",
+                    "https://sportsbook.fanduel.com/", 3, 7.1),
+
+            PropLeg("Aaron Gordon", "player_rebounds", "REB", "Over", 6.5, +125, "FanDuel",
+                    "https://sportsbook.fanduel.com/", 5, 11.2),
         ],
+
         "💣 Bomb Target +3000": [
-            PropLeg("Nikola Jokic", "player_double_double", "Double-Double", "Yes", None, +160, "FanDuel", "https://sportsbook.fanduel.com/"),
-            PropLeg("Jamal Murray", "player_threes", "3PM", "Over", 3.5, +210, "FanDuel", "https://sportsbook.fanduel.com/"),
-            PropLeg("Michael Porter Jr.", "player_points", "PTS", "Over", 24.5, +190, "FanDuel", "https://sportsbook.fanduel.com/"),
+            PropLeg("Nikola Jokic", "player_double_double", "Double-Double", "Yes", None, +160, "FanDuel",
+                    "https://sportsbook.fanduel.com/", 1, None),
+
+            PropLeg("Jamal Murray", "player_threes", "3PM", "Over", 3.5, +210, "FanDuel",
+                    "https://sportsbook.fanduel.com/", 1, 3.9),
+
+            PropLeg("Michael Porter Jr.", "player_points", "PTS", "Over", 24.5, +190, "FanDuel",
+                    "https://sportsbook.fanduel.com/", 14, 29.8),
         ],
     }
-    await ctx.send(embed=build_parlay_embed("DEN @ LAL", "FanDuel", groups, "TEST MODE"))
+
+    embed = build_parlay_embed("DEN @ LAL", "FanDuel", groups, "TEST MODE")
+    await ctx.send(embed=embed)
 
 if __name__ == "__main__":
     missing = []
