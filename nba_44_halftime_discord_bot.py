@@ -47,47 +47,25 @@ def get_player_photo_url(player_id: str) -> str:
     return f"https://cdn.nba.com/headshots/nba/latest/260x190/{player_id}.png"
 
 
-def american_to_decimal(price: Optional[int]) -> Optional[float]:
-    if price is None:
-        return None
-    try:
-        price = int(price)
-    except Exception:
-        return None
-    if price > 0:
-        return 1 + (price / 100)
-    if price < 0:
-        return 1 + (100 / abs(price))
-    return None
-
-
-def decimal_to_american(decimal_odds: float) -> int:
-    if decimal_odds >= 2:
-        return int(round((decimal_odds - 1) * 100))
-    return int(round(-100 / (decimal_odds - 1)))
-
-
-def combined_american_odds(prices: List[int]) -> Optional[int]:
-    decimal_total = 1.0
-    for price in prices:
-        dec = american_to_decimal(price)
-        if dec is None:
-            return None
-        decimal_total *= dec
-    return decimal_to_american(decimal_total)
-
-
 DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
 DISCORD_CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID", "0"))
 POLL_SECONDS = int(os.getenv("POLL_SECONDS", "15"))
 DEBUG_STATS = os.getenv("DEBUG_STATS", "false").lower() == "true"
+
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
 ODDS_API_BASE = "https://api.the-odds-api.com/v4/sports/basketball_nba"
 
-TEAM_FILTER = {team.strip().upper() for team in os.getenv("TEAM_FILTER", "").split(",") if team.strip()}
+TEAM_FILTER = {
+    team.strip().upper()
+    for team in os.getenv("TEAM_FILTER", "").split(",")
+    if team.strip()
+}
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
-log = logging.getLogger("nba_44_halftime_bot")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+log = logging.getLogger("nba_alert_bot")
 
 
 @dataclass
@@ -114,51 +92,40 @@ class PlayerHit:
 
 
 @dataclass
-class PropLeg:
-    player_name: str
+class OddsPick:
+    book: str
     market_key: str
     label: str
     side: str
     line: Optional[float]
     price: Optional[int]
-    book: str
     link: Optional[str] = None
-    live_value: Optional[float] = None
-    projected_value: Optional[float] = None
 
     def display(self) -> str:
         line_txt = "" if self.line is None else f" {self.line:g}"
         price_txt = "" if self.price is None else f" ({self.price:+d})"
         book_txt = f"[{self.book}]({self.link})" if self.link else self.book
-        progress_txt = ""
-        if self.live_value is not None and self.line:
-            pct = int(round((self.live_value / self.line) * 100))
-            proj_txt = ""
-            if self.projected_value is not None:
-                proj_txt = f" • Proj: {self.projected_value:.1f}"
-            progress_txt = f"\n  ↳ Live: **{self.live_value:g}/{self.line:g} {self.label}** ({pct}%){proj_txt}"
-        elif self.live_value is not None:
-            progress_txt = f"\n  ↳ Live: **{self.live_value:g} {self.label}**"
-        return f"• **{self.player_name}** {self.side}{line_txt} {self.label}{price_txt} — {book_txt}{progress_txt}"
+        return f"{book_txt} — {self.side}{line_txt} {self.label}{price_txt}"
 
 
-def build_alert_embed(hit: PlayerHit) -> discord.Embed:
-    def clean_time(val: str) -> str:
-        if not val:
-            return ""
-        val = val.replace("PT", "").replace(".00S", "")
-        if "M" in val:
-            mins, rest = val.split("M", 1)
-            secs = rest.replace("S", "") or "0"
-            return f"{int(mins)}:{int(secs):02d}"
-        return val.replace("S", "")
+def clean_time(val: str) -> str:
+    if not val:
+        return ""
+    val = val.replace("PT", "").replace(".00S", "")
+    if "M" in val:
+        mins, rest = val.split("M", 1)
+        secs = rest.replace("S", "") or "0"
+        return f"{int(mins)}:{int(secs):02d}"
+    return val.replace("S", "")
 
+
+def build_alert_embed(hit: PlayerHit, odds_pick: Optional[OddsPick] = None) -> discord.Embed:
     pretty_clock = clean_time(hit.game_clock)
     pretty_minutes = clean_time(hit.minutes)
 
     if hit.alert_type == "early-watch":
-        title = "👀 Early Watch"
-        stat_line = f"**{hit.assists} AST • {hit.rebounds} REB • {hit.points} PTS**"
+        title = "👀 Q1 Double-Double Pace"
+        stat_line = f"**{hit.assists} AST • {hit.rebounds} REB**\nPoints: **{hit.points}**"
         subtitle = "Q1 signal"
     elif hit.alert_type == "triple-double-watch":
         title = "👀 Triple-Double Watch"
@@ -178,45 +145,34 @@ def build_alert_embed(hit: PlayerHit) -> discord.Embed:
         description=f"**{hit.player_name}** ({hit.team_abbr})\n{stat_line}\n\n**{hit.matchup}**",
         color=get_team_color(hit.team_abbr),
     )
+
     embed.set_footer(text=hit.team_abbr, icon_url=get_team_logo_url(hit.team_abbr))
     embed.add_field(name="Game", value=f"{hit.game_status or 'Live'} • {subtitle}", inline=True)
     embed.add_field(name="Minutes", value=pretty_minutes or hit.minutes or "-", inline=True)
+
     if pretty_clock:
         embed.add_field(name="Clock", value=pretty_clock, inline=True)
+
+    if odds_pick:
+        embed.add_field(
+            name="Best Related Odds",
+            value=f"{odds_pick.display()}\n⚠️ Odds may be pregame/last available.",
+            inline=False,
+        )
+
     return embed
 
 
-def build_parlay_embed(matchup: str, book: str, groups: Dict[str, List[PropLeg]], game_status: str = "") -> discord.Embed:
-    embed = discord.Embed(
-        title="🎟️ Halftime Same-Book Parlay Builder",
-        description=(
-            f"**{matchup}**\n"
-            f"Book: **{book}**\n\n"
-            "Use this as an SGP builder. Odds may be pregame/last available; live stats show current pace."
-        ),
-        color=0xF5A623,
-    )
-    for tier_name, legs in groups.items():
-        if not legs:
-            continue
-        prices = [leg.price for leg in legs if leg.price is not None]
-        est = combined_american_odds(prices) if len(prices) == len(legs) else None
-        odds_text = f" — est. {est:+d}" if est is not None else ""
-        value = "\n".join(leg.display() for leg in legs)
-        embed.add_field(name=f"{tier_name}{odds_text}", value=value[:1024], inline=False)
-    if game_status:
-        embed.set_footer(text=game_status)
-    return embed
-
-
-class HalftimeAlertBot(commands.Bot):
+class NBAAlertBot(commands.Bot):
     def __init__(self) -> None:
         intents = discord.Intents.default()
         intents.message_content = True
         super().__init__(command_prefix="!", intents=intents)
         self.session: Optional[aiohttp.ClientSession] = None
         self.alerted: Set[str] = set()
-        self.parlay_alerted_games: Set[str] = set()
+        self.odds_events_cache: List[dict] = []
+        self.odds_events_cache_cycle: int = 0
+        self.poll_cycle: int = 0
 
     async def setup_hook(self) -> None:
         self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
@@ -245,13 +201,16 @@ class HalftimeAlertBot(commands.Bot):
     @tasks.loop(seconds=POLL_SECONDS)
     async def poll_live_games(self) -> None:
         try:
+            self.poll_cycle += 1
             log.info("Polling cycle started")
+
             if not DISCORD_CHANNEL_ID:
                 log.warning("DISCORD_CHANNEL_ID is not set. Skipping poll.")
                 return
 
             hits = await self.find_alert_hits()
             log.info("Found %s qualifying hits this cycle", len(hits))
+
             if not hits:
                 return
 
@@ -265,17 +224,20 @@ class HalftimeAlertBot(commands.Bot):
                 if hit.dedupe_key in self.alerted:
                     log.info("Skipping duplicate hit %s", hit.dedupe_key)
                     continue
+
                 self.alerted.add(hit.dedupe_key)
                 await self.send_player_alert(channel, hit)
 
-            await self.maybe_send_parlay_builders(channel, hits)
         except Exception:
             log.exception("poll_live_games crashed this cycle")
 
     async def send_player_alert(self, channel, hit: PlayerHit) -> None:
-        embed = build_alert_embed(hit)
+        odds_pick = await self.get_best_related_odds(hit)
+        embed = build_alert_embed(hit, odds_pick)
+
         try:
             photo_bytes = await self.fetch_player_photo_bytes(hit.player_id)
+
             if photo_bytes:
                 file = discord.File(fp=io.BytesIO(photo_bytes), filename=f"{hit.player_id}.png")
                 embed.set_thumbnail(url=f"attachment://{hit.player_id}.png")
@@ -283,40 +245,10 @@ class HalftimeAlertBot(commands.Bot):
             else:
                 embed.set_thumbnail(url=get_team_logo_url(hit.team_abbr))
                 await channel.send(embed=embed)
+
             log.info("Sent alert for %s", hit.dedupe_key)
         except Exception:
             log.exception("Failed to send alert for %s", hit.dedupe_key)
-
-    async def maybe_send_parlay_builders(self, channel, hits: List[PlayerHit]) -> None:
-        if not ODDS_API_KEY:
-            log.info("ODDS_API_KEY is not set. Skipping parlay builder.")
-            return
-
-        hits_by_game: Dict[str, List[PlayerHit]] = {}
-        for hit in hits:
-            hits_by_game.setdefault(hit.game_id, []).append(hit)
-
-        for game_id, game_hits in hits_by_game.items():
-            parlay_key = f"{game_id}:halftime-parlay-builder"
-            if parlay_key in self.parlay_alerted_games:
-                continue
-            if not any(hit.game_period == 2 for hit in game_hits):
-                continue
-
-            first_hit = game_hits[0]
-            try:
-                embed = await self.build_same_book_parlay_embed(first_hit, game_hits)
-            except Exception:
-                log.exception("Could not build parlay embed for game %s", game_id)
-                continue
-
-            if embed:
-                try:
-                    await channel.send(embed=embed)
-                    self.parlay_alerted_games.add(parlay_key)
-                    log.info("Sent parlay builder for game %s", game_id)
-                except Exception:
-                    log.exception("Failed sending parlay builder for game %s", game_id)
 
     @poll_live_games.before_loop
     async def before_poll(self) -> None:
@@ -325,6 +257,7 @@ class HalftimeAlertBot(commands.Bot):
     async def fetch_live_box_score_json(self, game_id: str) -> dict:
         assert self.session is not None
         url = f"https://cdn.nba.com/static/json/liveData/boxscore/boxscore_{game_id}.json"
+
         async with self.session.get(url) as resp:
             text = await resp.text()
             if resp.status != 200:
@@ -358,10 +291,12 @@ class HalftimeAlertBot(commands.Bot):
             return []
 
         hits: List[PlayerHit] = []
+
         for game in games:
             game_id = str(game.get("gameId", ""))
             if not game_id:
                 continue
+
             home_team = game.get("homeTeam", {}) or {}
             away_team = game.get("awayTeam", {}) or {}
             home_abbr = (home_team.get("teamTricode") or "HOME").upper()
@@ -374,6 +309,7 @@ class HalftimeAlertBot(commands.Bot):
             status = str(game.get("gameStatusText", "") or "")
             period = int(game.get("period", 0) or 0)
             clock = str(game.get("gameClock", "") or "")
+
             if period not in {1, 2}:
                 continue
 
@@ -387,25 +323,42 @@ class HalftimeAlertBot(commands.Bot):
             home = game_data.get("homeTeam", {}) or {}
             away = game_data.get("awayTeam", {}) or {}
 
-            for side, team_abbr, opponent_abbr in ((home, home_abbr, away_abbr), (away, away_abbr, home_abbr)):
+            for side, team_abbr, opponent_abbr in (
+                (home, home_abbr, away_abbr),
+                (away, away_abbr, home_abbr),
+            ):
                 for player in side.get("players", []) or []:
                     stats = player.get("statistics", {}) or {}
+
                     ast = int(stats.get("assists", 0) or 0)
                     reb = int(stats.get("reboundsTotal", 0) or 0)
                     pts = int(stats.get("points", 0) or 0)
                     threes_made = int(stats.get("threePointersMade", 0) or 0)
+
                     first = str(player.get("firstName", "") or "").strip()
                     last = str(player.get("familyName", "") or "").strip()
                     player_name = f"{first} {last}".strip() or "Unknown Player"
                     player_id = str(player.get("personId", "unknown"))
 
                     if DEBUG_STATS:
-                        log.info("%s | %s | Q%s | PTS=%s REB=%s AST=%s 3PM=%s", matchup, player_name, period, pts, reb, ast, threes_made)
+                        log.info(
+                            "%s | %s | Q%s | PTS=%s REB=%s AST=%s 3PM=%s",
+                            matchup, player_name, period, pts, reb, ast, threes_made
+                        )
 
-                    early_watch = (period == 1 and ast >= 3 and reb >= 3)
+                    early_watch = (
+                        period == 1 and (
+                            (ast >= 3 and reb >= 2) or
+                            (ast >= 2 and reb >= 3)
+                        )
+                    )
+
                     double_double_watch = (period == 2 and ast >= 4 and reb >= 4)
                     triple_double_watch = (period == 2 and pts >= 5 and reb >= 4 and ast >= 4)
-                    hes_on_fire = ((period == 1 and threes_made >= 2 and pts >= 8) or (period == 2 and threes_made >= 3 and pts >= 12))
+                    hes_on_fire = (
+                        (period == 1 and threes_made >= 2 and pts >= 8) or
+                        (period == 2 and threes_made >= 3 and pts >= 12)
+                    )
 
                     if not early_watch and not double_double_watch and not triple_double_watch and not hes_on_fire:
                         continue
@@ -426,96 +379,111 @@ class HalftimeAlertBot(commands.Bot):
                         game_clock=clock,
                         matchup=matchup,
                     )
+
                     if early_watch:
                         hits.append(PlayerHit(**common_data, alert_type="early-watch"))
+
                     if double_double_watch:
                         hits.append(PlayerHit(**common_data, alert_type="double-double-watch"))
+
                     if triple_double_watch:
                         hits.append(PlayerHit(**common_data, alert_type="triple-double-watch"))
+
                     if hes_on_fire:
                         hits.append(PlayerHit(**common_data, alert_type="hes-on-fire"))
+
         return hits
 
     # -----------------------------
-    # Odds API / Parlay Builder
+    # Odds API helpers
     # -----------------------------
-    def estimate_game_progress(self, hit: PlayerHit) -> float:
-        elapsed_seconds = 0
-        try:
-            period = int(hit.game_period or 0)
-            elapsed_seconds = max(0, (period - 1) * 12 * 60)
-            clock = str(hit.game_clock or "")
-            if clock.startswith("PT"):
-                clock_clean = clock.replace("PT", "").replace(".00S", "")
-                mins = 0
-                secs = 0
-                if "M" in clock_clean:
-                    m, rest = clock_clean.split("M", 1)
-                    mins = int(m or 0)
-                    secs = int(rest.replace("S", "") or 0)
-                elif "S" in clock_clean:
-                    secs = int(clock_clean.replace("S", "") or 0)
-                remaining = mins * 60 + secs
-                elapsed_seconds += max(0, 12 * 60 - remaining)
-            else:
-                elapsed_seconds += 6 * 60
-        except Exception:
-            elapsed_seconds = 12 * 60 if hit.game_period == 2 else 6 * 60
-        return max(elapsed_seconds / (48 * 60), 0.08)
-
-    def live_value_for_market(self, hit: PlayerHit, market_key: str) -> Optional[float]:
-        if market_key == "player_points":
-            return float(hit.points)
-        if market_key == "player_rebounds":
-            return float(hit.rebounds)
-        if market_key == "player_assists":
-            return float(hit.assists)
-        if market_key == "player_threes":
-            return float(hit.threes_made)
-        if market_key == "player_points_rebounds_assists":
-            return float(hit.points + hit.rebounds + hit.assists)
-        if market_key == "player_points_rebounds":
-            return float(hit.points + hit.rebounds)
-        if market_key == "player_points_assists":
-            return float(hit.points + hit.assists)
-        if market_key == "player_rebounds_assists":
-            return float(hit.rebounds + hit.assists)
-        if market_key == "player_double_double":
-            return float(sum(1 for v in [hit.points, hit.rebounds, hit.assists] if v >= 10))
-        return None
 
     async def fetch_odds_events(self) -> List[dict]:
         assert self.session is not None
+
         if not ODDS_API_KEY:
             return []
+
+        # Cache for ~10 polling cycles to reduce Odds API credits.
+        if self.odds_events_cache and (self.poll_cycle - self.odds_events_cache_cycle) < 10:
+            return self.odds_events_cache
+
         url = f"{ODDS_API_BASE}/odds"
-        params = {"apiKey": ODDS_API_KEY, "regions": "us", "markets": "h2h", "oddsFormat": "american", "includeLinks": "true"}
+        params = {
+            "apiKey": ODDS_API_KEY,
+            "regions": "us",
+            "markets": "h2h",
+            "oddsFormat": "american",
+            "includeLinks": "true",
+        }
+
         async with self.session.get(url, params=params) as resp:
             text = await resp.text()
             if resp.status != 200:
                 raise RuntimeError(f"Odds API events error {resp.status}: {text[:300]}")
-            return await resp.json()
+            events = await resp.json()
+            self.odds_events_cache = events
+            self.odds_events_cache_cycle = self.poll_cycle
+            return events
 
     def find_matching_odds_event(self, events: List[dict], hit: PlayerHit) -> Optional[dict]:
         team_name = TEAM_NAMES.get(hit.team_abbr)
         opp_name = TEAM_NAMES.get(hit.opponent_abbr)
+
         if not team_name or not opp_name:
             return None
+
         expected = {team_name, opp_name}
+
         for event in events:
             if {event.get("home_team"), event.get("away_team")} == expected:
                 return event
+
         return None
 
-    async def fetch_event_props(self, event_id: str) -> dict:
+    def markets_for_alert(self, alert_type: str) -> List[str]:
+        if alert_type == "double-double-watch":
+            return [
+                "player_double_double",
+                "player_rebounds_assists",
+                "player_rebounds",
+                "player_assists",
+            ]
+
+        if alert_type == "triple-double-watch":
+            return [
+                "player_triple_double",
+                "player_points_rebounds_assists",
+                "player_double_double",
+            ]
+
+        if alert_type == "hes-on-fire":
+            return [
+                "player_threes",
+                "player_points",
+            ]
+
+        if alert_type == "early-watch":
+            return [
+                "player_rebounds_assists",
+                "player_assists",
+                "player_rebounds",
+            ]
+
+        return ["player_points", "player_rebounds", "player_assists"]
+
+    async def fetch_event_props(self, event_id: str, markets: List[str]) -> dict:
         assert self.session is not None
+
         url = f"{ODDS_API_BASE}/events/{event_id}/odds"
-        markets = ",".join([
-            "player_points", "player_rebounds", "player_assists", "player_threes",
-            "player_double_double", "player_points_rebounds_assists",
-            "player_points_rebounds", "player_points_assists", "player_rebounds_assists",
-        ])
-        params = {"apiKey": ODDS_API_KEY, "regions": "us", "markets": markets, "oddsFormat": "american", "includeLinks": "true"}
+        params = {
+            "apiKey": ODDS_API_KEY,
+            "regions": "us",
+            "markets": ",".join(markets),
+            "oddsFormat": "american",
+            "includeLinks": "true",
+        }
+
         async with self.session.get(url, params=params) as resp:
             text = await resp.text()
             if resp.status != 200:
@@ -526,157 +494,108 @@ class HalftimeAlertBot(commands.Bot):
         for obj in (outcome, market, bookmaker):
             for key in ("link", "links", "url", "urls"):
                 val = obj.get(key)
+
                 if isinstance(val, str):
                     return val
+
                 if isinstance(val, dict):
                     for nested in val.values():
                         if isinstance(nested, str):
                             return nested
+
         return None
 
-    def collect_book_legs(self, odds_data: dict, player_lookup: Dict[str, PlayerHit]) -> Dict[str, List[PropLeg]]:
-        by_book: Dict[str, List[PropLeg]] = {}
-        market_labels = {
-            "player_points": "PTS", "player_rebounds": "REB", "player_assists": "AST",
-            "player_threes": "3PM", "player_double_double": "Double-Double",
-            "player_points_rebounds_assists": "PRA", "player_points_rebounds": "PTS+REB",
-            "player_points_assists": "PTS+AST", "player_rebounds_assists": "REB+AST",
+    def market_label(self, market_key: str) -> str:
+        labels = {
+            "player_double_double": "Double-Double",
+            "player_triple_double": "Triple-Double",
+            "player_points_rebounds_assists": "PRA",
+            "player_rebounds_assists": "REB+AST",
+            "player_points_rebounds": "PTS+REB",
+            "player_points_assists": "PTS+AST",
+            "player_points": "PTS",
+            "player_rebounds": "REB",
+            "player_assists": "AST",
+            "player_threes": "3PM",
         }
-        for bookmaker in odds_data.get("bookmakers", []) or []:
-            book = bookmaker.get("title") or bookmaker.get("key") or "Sportsbook"
-            for market in bookmaker.get("markets", []) or []:
-                market_key = market.get("key", "")
-                if market_key not in market_labels:
-                    continue
-                for outcome in market.get("outcomes", []) or []:
-                    desc = str(outcome.get("description", "") or "").strip()
-                    if desc not in player_lookup:
+        return labels.get(market_key, market_key)
+
+    def score_odds_pick(self, pick: OddsPick, preferred_markets: List[str]) -> float:
+        market_priority = len(preferred_markets) - preferred_markets.index(pick.market_key) if pick.market_key in preferred_markets else 0
+        price_score = float(pick.price or -999) / 100
+        return market_priority * 100 + price_score
+
+    async def get_best_related_odds(self, hit: PlayerHit) -> Optional[OddsPick]:
+        if not ODDS_API_KEY:
+            return None
+
+        try:
+            markets = self.markets_for_alert(hit.alert_type)
+            events = await self.fetch_odds_events()
+            event = self.find_matching_odds_event(events, hit)
+
+            if not event:
+                log.info("No matching odds event found for %s", hit.matchup)
+                return None
+
+            odds_data = await self.fetch_event_props(event["id"], markets)
+            picks: List[OddsPick] = []
+
+            for bookmaker in odds_data.get("bookmakers", []) or []:
+                book = bookmaker.get("title") or bookmaker.get("key") or "Sportsbook"
+
+                for market in bookmaker.get("markets", []) or []:
+                    market_key = market.get("key", "")
+
+                    if market_key not in markets:
                         continue
-                    side = str(outcome.get("name", "") or "").strip()
-                    if side.lower() not in {"over", "yes"}:
-                        continue
-                    try:
-                        price = int(outcome.get("price"))
-                    except Exception:
-                        price = None
-                    try:
-                        line = float(outcome.get("point")) if outcome.get("point") is not None else None
-                    except Exception:
-                        line = None
 
-                    hit = player_lookup[desc]
-                    live_value = self.live_value_for_market(hit, market_key)
-                    projected_value = None
-                    if live_value is not None:
-                        progress = self.estimate_game_progress(hit)
-                        projected_value = live_value / progress if progress > 0 else None
+                    for outcome in market.get("outcomes", []) or []:
+                        desc = str(outcome.get("description", "") or "").strip()
 
-                    leg = PropLeg(
-                        player_name=desc,
-                        market_key=market_key,
-                        label=market_labels[market_key],
-                        side=side,
-                        line=line,
-                        price=price,
-                        book=book,
-                        link=self.extract_link(bookmaker, market, outcome),
-                        live_value=live_value,
-                        projected_value=projected_value,
-                    )
-                    by_book.setdefault(book, []).append(leg)
-        return by_book
+                        if desc.lower() != hit.player_name.lower():
+                            continue
 
-    def score_leg(self, leg: PropLeg) -> float:
-        progress_score = 0.0
-        if leg.live_value is not None and leg.line:
-            progress_score = (leg.live_value / leg.line) * 100
-        odds_score = float(leg.price or -120) / 10
-        return progress_score + odds_score
+                        side = str(outcome.get("name", "") or "").strip()
 
-    def choose_leg_for_player(self, legs: List[PropLeg], player_name: str, market_keys: List[str], used_markets: Optional[Set[str]] = None) -> Optional[PropLeg]:
-        used_markets = used_markets or set()
-        candidates = [
-            leg for leg in legs
-            if leg.player_name == player_name and leg.market_key in market_keys and leg.market_key not in used_markets and leg.price is not None
-        ]
-        if not candidates:
-            return None
-        return sorted(candidates, key=self.score_leg, reverse=True)[0]
+                        # We only want actionable positive legs.
+                        if side.lower() not in {"over", "yes"}:
+                            continue
 
-    def fill_tier(self, legs: List[PropLeg], game_hits: List[PlayerHit], preferred_keys: List[str], target: int = 3) -> List[PropLeg]:
-        players = {hit.player_name: hit for hit in game_hits}
-        bucket: List[PropLeg] = []
-        used_players: Set[str] = set()
-        used_markets: Set[str] = set()
+                        try:
+                            price = int(outcome.get("price"))
+                        except Exception:
+                            price = None
 
-        # First pass: one leg per player.
-        for name in players:
-            if len(bucket) >= target:
-                break
-            leg = self.choose_leg_for_player(legs, name, preferred_keys, used_markets)
-            if leg and leg.player_name not in used_players:
-                bucket.append(leg)
-                used_players.add(leg.player_name)
-                used_markets.add(leg.market_key)
+                        try:
+                            line = float(outcome.get("point")) if outcome.get("point") is not None else None
+                        except Exception:
+                            line = None
 
-        # Second pass: if only one player triggered, fill remaining while avoiding duplicate markets.
-        remaining = sorted(
-            [leg for leg in legs if leg.player_name in players and leg.market_key not in used_markets and leg.price is not None and leg not in bucket],
-            key=self.score_leg,
-            reverse=True,
-        )
-        for leg in remaining:
-            if len(bucket) >= target:
-                break
-            bucket.append(leg)
-            used_markets.add(leg.market_key)
-        return bucket[:target]
+                        picks.append(
+                            OddsPick(
+                                book=book,
+                                market_key=market_key,
+                                label=self.market_label(market_key),
+                                side=side,
+                                line=line,
+                                price=price,
+                                link=self.extract_link(bookmaker, market, outcome),
+                            )
+                        )
 
-    def build_groups_for_book(self, legs: List[PropLeg], game_hits: List[PlayerHit]) -> Dict[str, List[PropLeg]]:
-        builder = self.fill_tier(legs, game_hits, [
-            "player_rebounds_assists", "player_assists", "player_rebounds", "player_points", "player_threes",
-            "player_points_rebounds", "player_points_assists",
-        ])
-        risky = self.fill_tier(legs, game_hits, [
-            "player_points_rebounds_assists", "player_double_double", "player_threes", "player_points_rebounds",
-            "player_points_assists", "player_rebounds_assists",
-        ])
-        bomb = self.fill_tier(legs, game_hits, [
-            "player_double_double", "player_points_rebounds_assists", "player_threes", "player_points",
-        ])
-        return {"🧱 Builder Target +500": builder, "🔥 Risky Target +1000": risky, "💣 Bomb Target +3000": bomb}
+            if not picks:
+                log.info("No related odds found for %s / %s", hit.player_name, hit.alert_type)
+                return None
 
-    async def build_same_book_parlay_embed(self, first_hit: PlayerHit, game_hits: List[PlayerHit]) -> Optional[discord.Embed]:
-        events = await self.fetch_odds_events()
-        event = self.find_matching_odds_event(events, first_hit)
-        if not event:
-            log.info("No matching odds event found for %s", first_hit.matchup)
-            return None
-        odds_data = await self.fetch_event_props(event["id"])
-        player_lookup = {hit.player_name: hit for hit in game_hits}
-        book_legs = self.collect_book_legs(odds_data, player_lookup)
-        if not book_legs:
-            log.info("No player prop legs found for %s", first_hit.matchup)
+            return sorted(picks, key=lambda p: self.score_odds_pick(p, markets), reverse=True)[0]
+
+        except Exception:
+            log.exception("Could not fetch best related odds for %s", hit.player_name)
             return None
 
-        best_book = None
-        best_groups = None
-        best_score = -1
-        for book, legs in book_legs.items():
-            groups = self.build_groups_for_book(legs, game_hits)
-            total_legs = sum(len(v) for v in groups.values())
-            unique_tiers = sum(1 for v in groups.values() if len(v) >= 2)
-            score = total_legs + unique_tiers * 3
-            if score > best_score:
-                best_score = score
-                best_book = book
-                best_groups = groups
-        if not best_book or not best_groups:
-            return None
-        return build_parlay_embed(matchup=first_hit.matchup, book=best_book, groups=best_groups, game_status=first_hit.game_status)
 
-
-bot = HalftimeAlertBot()
+bot = NBAAlertBot()
 
 
 @bot.command()
@@ -694,35 +613,16 @@ async def health(ctx: commands.Context) -> None:
     )
 
 
-@bot.command()
-async def testparlay(ctx: commands.Context) -> None:
-    groups = {
-        "🧱 Builder Target +500": [
-            PropLeg("Nikola Jokic", "player_assists", "AST", "Over", 7.5, -115, "FanDuel", "https://sportsbook.fanduel.com/", 4, 9.6),
-            PropLeg("Jamal Murray", "player_points", "PTS", "Over", 20.5, -110, "FanDuel", "https://sportsbook.fanduel.com/", 12, 26.4),
-            PropLeg("Michael Porter Jr.", "player_threes", "3PM", "Over", 2.5, +135, "FanDuel", "https://sportsbook.fanduel.com/", 2, 4.8),
-        ],
-        "🔥 Risky Target +1000": [
-            PropLeg("Nikola Jokic", "player_points_rebounds_assists", "PRA", "Over", 45.5, +105, "FanDuel", "https://sportsbook.fanduel.com/", 28, 58.2),
-            PropLeg("Jamal Murray", "player_assists", "AST", "Over", 5.5, +120, "FanDuel", "https://sportsbook.fanduel.com/", 3, 7.1),
-            PropLeg("Aaron Gordon", "player_rebounds", "REB", "Over", 6.5, +125, "FanDuel", "https://sportsbook.fanduel.com/", 5, 11.2),
-        ],
-        "💣 Bomb Target +3000": [
-            PropLeg("Nikola Jokic", "player_double_double", "Double-Double", "Yes", None, +160, "FanDuel", "https://sportsbook.fanduel.com/", 1, None),
-            PropLeg("Jamal Murray", "player_threes", "3PM", "Over", 3.5, +210, "FanDuel", "https://sportsbook.fanduel.com/", 1, 3.9),
-            PropLeg("Michael Porter Jr.", "player_points", "PTS", "Over", 24.5, +190, "FanDuel", "https://sportsbook.fanduel.com/", 14, 29.8),
-        ],
-    }
-    embed = build_parlay_embed("DEN @ LAL", "FanDuel", groups, "TEST MODE")
-    await ctx.send(embed=embed)
-
-
 if __name__ == "__main__":
     missing = []
+
     if not DISCORD_TOKEN:
         missing.append("DISCORD_BOT_TOKEN")
+
     if not DISCORD_CHANNEL_ID:
         missing.append("DISCORD_CHANNEL_ID")
+
     if missing:
         raise SystemExit(f"Missing required environment variables: {', '.join(missing)}")
+
     bot.run(DISCORD_TOKEN)
