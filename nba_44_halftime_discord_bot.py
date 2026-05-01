@@ -124,9 +124,22 @@ def build_alert_embed(hit: PlayerHit, odds_pick: Optional[OddsPick] = None) -> d
     pretty_minutes = clean_time(hit.minutes)
 
     if hit.alert_type == "early-watch":
-        title = "👀 Q1 Double-Double Pace"
-        stat_line = f"**{hit.assists} AST • {hit.rebounds} REB**\nPoints: **{hit.points}**"
-        subtitle = "Q1 signal"
+        title = "📈 Q1 Stat Watch"
+        stat_line = f"**{hit.assists} AST • {hit.rebounds} REB • {hit.points} PTS**"
+
+        if hit.assists >= 3 and hit.rebounds >= 3:
+            tag = "🔥 All-Around"
+        elif hit.assists >= 3:
+            tag = "🎯 Playmaker"
+        elif hit.rebounds >= 3:
+            tag = "🧱 Glass Cleaner"
+        else:
+            tag = ""
+
+        if tag:
+            stat_line += f"\\n{tag}"
+
+        subtitle = "Early activity"
     elif hit.alert_type == "triple-double-watch":
         title = "👀 Triple-Double Watch"
         stat_line = f"**{hit.points} PTS • {hit.rebounds} REB • {hit.assists} AST**"
@@ -348,8 +361,7 @@ class NBAAlertBot(commands.Bot):
 
                     early_watch = (
                         period == 1 and (
-                            (ast >= 3 and reb >= 2) or
-                            (ast >= 2 and reb >= 3)
+                            ast >= 3 or reb >= 3
                         )
                     )
 
