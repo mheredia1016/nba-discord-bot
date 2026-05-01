@@ -140,6 +140,24 @@ def build_alert_embed(hit: PlayerHit, odds_pick: Optional[OddsPick] = None) -> d
             stat_line += f"\\n{tag}"
 
         subtitle = "Early activity"
+    elif hit.alert_type == "q2-stat-watch":
+        title = "⚡ Q2 Stat Watch"
+        stat_line = f"**{hit.assists} AST • {hit.rebounds} REB • {hit.points} PTS**"
+
+        if hit.assists >= 3 and hit.rebounds >= 3:
+            tag = "🔥 All-Around"
+        elif hit.assists >= 3:
+            tag = "🎯 Playmaker"
+        elif hit.rebounds >= 3:
+            tag = "🧱 Glass Cleaner"
+        else:
+            tag = ""
+
+        if tag:
+            stat_line += f"\n{tag}"
+
+        subtitle = "Mid-game activity"
+
     elif hit.alert_type == "triple-double-watch":
         title = "👀 Triple-Double Watch"
         stat_line = f"**{hit.points} PTS • {hit.rebounds} REB • {hit.assists} AST**"
@@ -365,6 +383,12 @@ class NBAAlertBot(commands.Bot):
                         )
                     )
 
+                    q2_stat_watch = (
+                        period == 2 and (
+                            ast >= 3 or reb >= 3
+                        )
+                    )
+
                     double_double_watch = (period == 2 and ast >= 4 and reb >= 4)
                     triple_double_watch = (period == 2 and pts >= 5 and reb >= 4 and ast >= 4)
                     hes_on_fire = (
@@ -372,7 +396,7 @@ class NBAAlertBot(commands.Bot):
                         (period == 2 and threes_made >= 3 and pts >= 12)
                     )
 
-                    if not early_watch and not double_double_watch and not triple_double_watch and not hes_on_fire:
+                    if not early_watch and not q2_stat_watch and not double_double_watch and not triple_double_watch and not hes_on_fire:
                         continue
 
                     common_data = dict(
@@ -394,6 +418,9 @@ class NBAAlertBot(commands.Bot):
 
                     if early_watch:
                         hits.append(PlayerHit(**common_data, alert_type="early-watch"))
+
+                    if q2_stat_watch:
+                        hits.append(PlayerHit(**common_data, alert_type="q2-stat-watch"))
 
                     if double_double_watch:
                         hits.append(PlayerHit(**common_data, alert_type="double-double-watch"))
@@ -475,7 +502,7 @@ class NBAAlertBot(commands.Bot):
                 "player_points",
             ]
 
-        if alert_type == "early-watch":
+        if alert_type in {"early-watch", "q2-stat-watch"}:
             return [
                 "player_rebounds_assists",
                 "player_assists",
