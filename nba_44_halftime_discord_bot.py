@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Set
 
 import aiohttp
-from nba_api.live.nba.endpoints import scoreboard
 import discord
 from discord.ext import commands, tasks
 
@@ -297,21 +296,38 @@ class NBAAlertBot(commands.Bot):
             return await resp.json()
 
     async def fetch_live_scoreboard_games(self) -> List[dict]:
-        log.info("About to fetch live scoreboard")
+        assert self.session is not None
 
-        def get_games() -> List[dict]:
-            board = scoreboard.ScoreBoard()
-            return board.get_dict().get("scoreboard", {}).get("games", [])
+        url = "https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json"
 
         try:
-            games = await asyncio.wait_for(asyncio.to_thread(get_games), timeout=20)
-            log.info("Fetched %s live games from scoreboard", len(games))
-            return games
-        except asyncio.TimeoutError:
-            log.exception("Timed out fetching live scoreboard")
-            return []
+            async with self.session.get(url) as resp:
+                text = await resp.text()
+
+                if resp.status == 429:
+                    log.warning("NBA scoreboard rate limited (429)")
+                    return []
+
+                if resp.status != 200:
+                    log.warning("NBA scoreboard HTTP %s: %s", resp.status, text[:300])
+                    return []
+
+                if not text.strip():
+                    log.warning("NBA scoreboard returned empty response")
+                    return []
+
+                try:
+                    data = await resp.json()
+                except Exception:
+                    log.exception("NBA scoreboard returned invalid JSON: %s", text[:300])
+                    return []
+
+                games = data.get("scoreboard", {}).get("games", [])
+                log.info("Fetched %s live NBA games from CDN scoreboard", len(games))
+                return games
+
         except Exception:
-            log.exception("Failed fetching live scoreboard")
+            log.exception("Failed fetching live NBA scoreboard")
             return []
 
     async def find_alert_hits(self) -> List[PlayerHit]:
