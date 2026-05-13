@@ -54,6 +54,18 @@ DEBUG_STATS = os.getenv("DEBUG_STATS", "false").lower() == "true"
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
 ODDS_API_BASE = "https://api.the-odds-api.com/v4/sports/basketball_nba"
 
+NBA_CDN_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json,text/plain,*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://www.nba.com",
+    "Referer": "https://www.nba.com/",
+}
+
 TEAM_FILTER = {
     team.strip().upper()
     for team in os.getenv("TEAM_FILTER", "").split(",")
@@ -288,7 +300,7 @@ class NBAAlertBot(commands.Bot):
         assert self.session is not None
         url = f"https://cdn.nba.com/static/json/liveData/boxscore/boxscore_{game_id}.json"
 
-        async with self.session.get(url) as resp:
+        async with self.session.get(url, headers=NBA_CDN_HEADERS) as resp:
             text = await resp.text()
             if resp.status != 200:
                 raise RuntimeError(f"Live boxscore API error {resp.status}: {text[:300]}")
@@ -301,7 +313,7 @@ class NBAAlertBot(commands.Bot):
         url = "https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json"
 
         try:
-            async with self.session.get(url) as resp:
+            async with self.session.get(url, headers=NBA_CDN_HEADERS) as resp:
                 text = await resp.text()
 
                 if resp.status == 429:
