@@ -1,5 +1,6 @@
 import asyncio
 import io
+import json
 import logging
 import os
 from dataclasses import dataclass
@@ -329,7 +330,7 @@ class NBAAlertBot(commands.Bot):
                     return []
 
                 try:
-                    data = await resp.json()
+                    data = json.loads(text)
                 except Exception:
                     log.exception("NBA scoreboard returned invalid JSON: %s", text[:300])
                     return []
